@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tahun-gajah-v8-\${{ github.ref }}
+  group: tahun-gajah-v8-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -29,6 +29,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Install FFmpeg on the cloud runner
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
       - name: Confirm cloud runtime tools
         run: |
           node --version

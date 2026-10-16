@@ -16,7 +16,7 @@ document.body.appendChild(renderer.domElement);
 const scene=new THREE.Scene();
 scene.background=new THREE.Color(0xc6a88f);
 scene.fog=new THREE.FogExp2(0xc6a88f,0.019);
-const camera=new THREE.PerspectiveCamera(34,W/H,.15,100);
+const camera=new THREE.PerspectiveCamera(46,W/H,.15,100);
 const hemi=new THREE.HemisphereLight(0xe1ebf0,0x8b5b37,2.0);
 scene.add(hemi);
 const sun=new THREE.DirectionalLight(0xffd6a5,3.1);
@@ -237,8 +237,8 @@ function renderAt(time){
     const a=.03+age*.56;p.ob.scale.set(a,a*.62,a);
     p.ob.material.opacity=.1*(1-age);
   }
-  camera.position.set(6.3+time*.30,5.2,11.0+time*.20);
-  path.set(.45+time*.27,2.0,0);
+  camera.position.set(9.0+time*.18,6.3,18.3+time*.17);
+  path.set(0.65+time*.17,2.4,-0.6);
   camera.lookAt(path);
   renderer.render(scene,camera);
   return true;

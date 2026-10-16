@@ -1,0 +1,58 @@
+name: Tahun Gajah V8 — Cloud 3D Render Smoke
+
+on:
+  push:
+    branches:
+      - feat/tahun-gajah-v8-cloud-render
+    paths:
+      - ".github/workflows/tahun-gajah-v8-cloud.yml"
+      - "experiments/tahun-gajah-v8-cloud/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tahun-gajah-v8-\${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  render-v8:
+    name: Procedural Three.js MP4 (CPU cloud)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: experiments/tahun-gajah-v8-cloud
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Confirm cloud runtime tools
+        run: |
+          node --version
+          npm --version
+          ffmpeg -version | head -n 1
+          command -v google-chrome || command -v chromium || command -v chromium-browser || (echo "Chrome is missing on runner" && exit 1)
+      - name: Install Three.js + browser automation (no paid services)
+        run: npm install --no-audit --no-fund --ignore-scripts
+      - name: Render real 3D elephant scene — native 24 FPS
+        env:
+          RENDER_WIDTH: "360"
+          RENDER_HEIGHT: "640"
+          RENDER_FPS: "24"
+          RENDER_SECONDS: "2"
+        run: npm run render:smoke
+      - name: Verify MP4 decodes
+        run: |
+          test -s output/TAHUN_GAJAH_V8_CLOUD_SMOKE.mp4
+          ffmpeg -v error -i output/TAHUN_GAJAH_V8_CLOUD_SMOKE.mp4 -f null -
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,nb_frames,r_frame_rate -of default=noprint_wrappers=1 output/TAHUN_GAJAH_V8_CLOUD_SMOKE.mp4
+      - name: Upload only finished MP4
+        uses: actions/upload-artifact@v4
+        with:
+          name: tahun-gajah-v8-cloud-smoke-mp4
+          path: experiments/tahun-gajah-v8-cloud/output/TAHUN_GAJAH_V8_CLOUD_SMOKE.mp4
+          if-no-files-found: error
+          retention-days: 7

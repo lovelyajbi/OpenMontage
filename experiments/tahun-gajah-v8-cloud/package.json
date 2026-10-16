@@ -1,0 +1,13 @@
+{
+  "name": "tahun-gajah-v8-cloud-smoke",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "render:smoke": "node render.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.0.0",
+    "three": "0.181.2"
+  }
+}

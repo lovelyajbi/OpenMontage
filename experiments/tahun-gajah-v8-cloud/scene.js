@@ -55,6 +55,123 @@ function cyl(parent,name,r1,r2,height,p,material,rot){
   const o=mesh(new THREE.CylinderGeometry(r1,r2,height,12),material,parent,p);
   o.name=name;if(rot)o.rotation.set(...rot);return o;
 }
+
+/* V8 QUALITY MIGRATION: connected implicit-surface torso inspired by V5's
+   procedural signed-distance body, now meshed natively in Three.js. */
+function organicBodySDF(x,y,z){
+  const ell=(cx,cy,cz,rx,ry,rz)=>
+    (Math.hypot((x-cx)/rx,(y-cy)/ry,(z-cz)/rz)-1)*Math.min(rx,ry,rz);
+  const smin=(a,b,k)=>{
+    const h=Math.max(k-Math.abs(a-b),0)/k;
+    return Math.min(a,b)-h*h*k*.25;
+  };
+  let d=smin(ell(0,3.52,-.43,1.65,1.48,2.43),
+             ell(0,3.63,1.16,1.52,1.66,1.20),.62);
+  d=smin(d,ell(0,3.50,-2.0,1.50,1.52,1.11),.53);
+  d=smin(d,ell(0,3.80,2.23,.97,1.12,.98),.48);
+  d=smin(d,ell(0,4.18,2.36,.93,.97,.84),.36);
+  d=smin(d,ell(0,3.45,2.76,.75,.74,.62),.30);
+  const creases=.006*Math.sin(z*9.1+y*2.1)*(Math.max(0,Math.abs(x)-.9)/1.1);
+  const micro=.0025*Math.sin(z*19+Math.sin(y*6))*Math.sin(y*23+x*10)
+       +.0035*Math.sin(x*26+y*11)*Math.cos(z*15);
+  return d+creases+micro;
+}
+let _organicCached=null;
+function makeOrganicBodyGeometry(){
+ if(_organicCached)return _organicCached;
+ const nx=40,ny=44,nz=70;
+ const xmin=-2.20,ymin=1.14,zmin=-3.63;
+ const dx=4.4/(nx-1),dy=4.72/(ny-1),dz=7.46/(nz-1);
+ const idx=(i,j,k)=>(i*ny+j)*nz+k;
+ const V=new Float32Array(nx*ny*nz);
+ for(let i=0;i<nx;i++)for(let j=0;j<ny;j++)for(let k=0;k<nz;k++)
+   V[idx(i,j,k)]=organicBodySDF(xmin+i*dx,ymin+j*dy,zmin+k*dz);
+ const coords=[
+  [0,0,0],[1,0,0],[1,1,0],[0,1,0],
+  [0,0,1],[1,0,1],[1,1,1],[0,1,1]];
+ const tetras=[[0,5,1,6],[0,1,2,6],[0,2,3,6],[0,3,7,6],[0,7,4,6],[0,4,5,6]];
+ const pos=[],norm=[],uv=[],cols=[];
+ function interp(a,b){
+   const q=a.v/(a.v-b.v||1e-9);
+   return [a.p[0]+q*(b.p[0]-a.p[0]),
+           a.p[1]+q*(b.p[1]-a.p[1]),
+           a.p[2]+q*(b.p[2]-a.p[2])];
+ }
+ function emit(p){
+   const x=p[0],y=p[1],z=p[2],e=.02;
+   let nx=organicBodySDF(x+e,y,z)-organicBodySDF(x-e,y,z);
+   let ny=organicBodySDF(x,y+e,z)-organicBodySDF(x,y-e,z);
+   let nz=organicBodySDF(x,y,z+e)-organicBodySDF(x,y,z-e);
+   let inv=1/Math.max(.00001,Math.hypot(nx,ny,nz));
+   pos.push(z,y-.76,x);
+   norm.push(nz*inv,ny*inv,nx*inv);
+   uv.push((Math.atan2(x,z)+Math.PI)/(Math.PI*2),(y-1.12)/4.75);
+   const stress=Math.cos(18*z+4*y)*Math.sin(9*x+16*y);
+   const var1=Math.sin(5.1*z+3.4*x)*Math.cos(8.3*y);
+   const tone=.87+.055*var1-.025*Math.abs(stress);
+   cols.push(tone*.97,tone*.94,tone*.89);
+ }
+ function tri(p0,p1,p2){
+  const ax=p1[0]-p0[0],ay=p1[1]-p0[1],az=p1[2]-p0[2];
+  const bx=p2[0]-p0[0],by=p2[1]-p0[1],bz=p2[2]-p0[2];
+  const cx=ay*bz-az*by,cy=az*bx-ax*bz,cz=ax*by-ay*bx;
+  const mm=(p0[0]+p1[0]+p2[0])/3,nn=(p0[1]+p1[1]+p2[1])/3,oo=(p0[2]+p1[2]+p2[2])/3;
+  if(cx*(organicBodySDF(mm+.01,nn,oo)-organicBodySDF(mm-.01,nn,oo))+
+     cy*(organicBodySDF(mm,nn+.01,oo)-organicBodySDF(mm,nn-.01,oo))+
+     cz*(organicBodySDF(mm,nn,oo+.01)-organicBodySDF(mm,nn,oo-.01))<0){
+    const tmp=p1;p1=p2;p2=tmp;
+  }
+  emit(p0);emit(p1);emit(p2);
+ }
+ for(let i=0;i<nx-1;i++)for(let j=0;j<ny-1;j++)for(let k=0;k<nz-1;k++){
+  const v8=coords.map(v=>({v:V[idx(i+v[0],j+v[1],k+v[2])],
+     p:[xmin+(i+v[0])*dx,ymin+(j+v[1])*dy,zmin+(k+v[2])*dz]}));
+  let min=1e9,max=-1e9;
+  for(const p of v8){min=Math.min(min,p.v);max=Math.max(max,p.v);}
+  if(min>=0||max<0)continue;
+  for(const ids of tetras){
+    const inside=ids.map(v=>v8[v]).filter(a=>a.v<0);
+    const outside=ids.map(v=>v8[v]).filter(a=>a.v>=0);
+    if(inside.length===1){
+       tri(interp(inside[0],outside[0]),interp(inside[0],outside[1]),interp(inside[0],outside[2]));
+    }else if(inside.length===3){
+       tri(interp(outside[0],inside[0]),interp(outside[0],inside[1]),interp(outside[0],inside[2]));
+    }else if(inside.length===2){
+       const a=interp(inside[0],outside[0]),b=interp(inside[0],outside[1]);
+       const cc=interp(inside[1],outside[0]),d=interp(inside[1],outside[1]);
+       tri(a,b,cc);tri(b,d,cc);
+    }
+  }
+ }
+ if(pos.length<9000)throw Error("Organic torso mesh undergenerated:"+pos.length);
+ const g=new THREE.BufferGeometry();
+ g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+ g.setAttribute('normal',new THREE.Float32BufferAttribute(norm,3));
+ g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
+ g.setAttribute('color',new THREE.Float32BufferAttribute(cols,3));
+ g.computeBoundingSphere();
+ console.log('V5-derived connected organic core vertices:',pos.length/3);
+ return (_organicCached=g);
+}
+function proceduralSkinMicrotexture(){
+ const n=256,pixels=new Uint8Array(n*n*4);
+ for(let y=0;y<n;y++)for(let x=0;x<n;x++){
+   const ripple=Math.sin(x*.42+4*Math.sin(y*.12))*Math.sin(y*.35+Math.sin(x*.09));
+   const tiny=Math.sin(1.7*x+2.1*y)*Math.sin(.9*x-1.3*y);
+   const p=(y*n+x)*4;
+   const c=Math.max(0,Math.min(255,183+16*ripple+6*tiny));
+   pixels[p]=c;pixels[p+1]=c*.97;pixels[p+2]=c*.92;pixels[p+3]=255;
+ }
+ const tx=new THREE.DataTexture(pixels,n,n,THREE.RGBAFormat);
+ tx.wrapS=THREE.RepeatWrapping;tx.wrapT=THREE.RepeatWrapping;
+ tx.colorSpace=THREE.SRGBColorSpace;tx.needsUpdate=true;
+ return tx;
+}
+const organicMaterial=new THREE.MeshStandardMaterial({
+   color:0x9a9690,vertexColors:true,map:proceduralSkinMicrotexture(),
+   roughness:.93,metalness:0,side:THREE.DoubleSide
+});
+
 const terrainGeo=new THREE.PlaneGeometry(95,95,80,80);
 terrainGeo.rotateX(-Math.PI/2);
 const pts=terrainGeo.attributes.position;
@@ -69,7 +186,7 @@ mesh(terrainGeo,sand,scene,[0,-.09,0],null,false).receiveShadow=true;
 const city=new THREE.Group();
 scene.add(city);
 for(let i=0;i<98;i++){
-  const x=6+rand(0,32),z=rand(-25,15);
+  const x=-8-rand(0,37),z=rand(-25,15);
   if(z>0 && x<14)continue;
   const w=rand(.85,2.65),d=rand(.8,2.5),h=rand(1.4,4.6);
   const group=new THREE.Group();group.position.set(x,0,z);
@@ -132,23 +249,20 @@ function taper(parent,material,points,radii){
 function elephant(tag,pos,scale,phase){
   const root=new THREE.Group();root.position.set(...pos);root.scale.setScalar(scale);scene.add(root);
   const rig=new THREE.Group();root.add(rig);
-  ell(rig,tag+'_organic_torso',[-.26,2.55,0],[1.95,1.23,1.09],skin);
-  ell(rig,tag+'_shoulder',[.84,2.68,0],[1.15,1.24,1.05],skin);
-  ell(rig,tag+'_skull',[1.7,2.8,0],[.83,.92,.85],skin);
-  ell(rig,tag+'_jaw',[2.10,2.31,0],[.53,.46,.58],skinDark);
+  mesh(makeOrganicBodyGeometry(),organicMaterial,rig,[0,0,0],null);
   for(const side of [-1,1]){
     const ear=ell(rig,tag+'_ear',[1.04,3.04,side*.91],[.17,.79,.70],skin);
     ear.rotation.x=side*.22;
     ell(rig,tag+'_earfold',[1.09,2.99,side*1.01],[.095,.57,.45],skinDark);
     ell(rig,tag+'_eye',[2.10,3.09,side*.66],[.10,.10,.05],skinDark);
     taper(rig,ivory,[
-      new THREE.Vector3(2.08,2.32,side*.5),
-      new THREE.Vector3(2.66,2.15,side*.65),
-      new THREE.Vector3(3.02,2.31,side*.7),
-      new THREE.Vector3(3.19,2.62,side*.73)],
+      new THREE.Vector3(2.79,2.31,side*.55),
+      new THREE.Vector3(3.44,2.15,side*.67),
+      new THREE.Vector3(3.82,2.32,side*.73),
+      new THREE.Vector3(3.94,2.66,side*.77)],
       [.17,.155,.12,.045]);
   }
-  const trunkPivot=new THREE.Group();trunkPivot.position.set(2.32,2.50,0);rig.add(trunkPivot);
+  const trunkPivot=new THREE.Group();trunkPivot.position.set(3.08,2.40,0);rig.add(trunkPivot);
   taper(trunkPivot,skin,[
     new THREE.Vector3(0,0,0),new THREE.Vector3(.21,-.34,0),
     new THREE.Vector3(.33,-.82,0),new THREE.Vector3(.30,-1.36,0),
